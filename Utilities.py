@@ -2,6 +2,7 @@ import getpass
 import pymongo
 from bson import DBRef
 from pymongo import MongoClient
+from datetime import datetime
 
 cluster = 'mongodb+srv://cecs323:123qwe@cluster0.zk708nj.mongodb.net/?retryWrites=true&w=majority'
 client = MongoClient(cluster)
@@ -28,10 +29,13 @@ employees_validator = {
     'validator': {
         '$jsonSchema': {
             'bsonType': "object",
-            'required': ["name"],
+            'required': ["employee_id", "name"],
             'additionalProperties': False,
             'properties': {
                 '_id': {},
+                'employee_id': {
+                    'bsonType': "string",
+                },
                 'name': {
                     'bsonType': "string",
                 },
@@ -39,10 +43,14 @@ employees_validator = {
         }
     }
 }
-db.command('collMod', 'employees', **buildings_validator)
+db.command('collMod', 'employees', **employees_validator)
 
 db.buildings.create_index([
     ("name", pymongo.ASCENDING),
+], unique=True)
+
+db.employees.create_index([
+    ("employee_id", pymongo.ASCENDING),
 ], unique=True)
 
 db.rooms.create_index([
@@ -79,60 +87,99 @@ db.loan.create_index([
 ], unique=True)
 
 db.returns.create_index([
-    ("request", pymongo.ASCENDING),
+    ("loan", pymongo.ASCENDING),
 ], unique=True)
+
+try:
+    db.validate_collection("counters")
+except pymongo.errors.OperationFailure:
+    db.create_collection("counters")
+    db.counters.insert_one({
+        "_id": "key_number",
+        "seq": 1
+    })
+
+
+def get_next_sequence(name):
+    return db.counters.find_one_and_update(
+        {"_id": name},
+        {"$inc": {"seq": 1}}
+    )['seq']
+
+
+def room_employee_can_enter(employee):
+    requests = db.requests.find({
+        'employee': DBRef('employees', employee['_id'])
+    })
+    res = []
+    for request in requests:
+        loan_id = db.loan.find_one({
+            'request': DBRef('requests', request['_id'])
+        })['_id']
+        a = db.returns.find_one({
+            'loan': DBRef('loan', loan_id),
+        }, {"_id": 1})
+        if not a:
+            room = db.dereference(request['room'])
+            # building = db.dereference(room['building'])
+            res.append(room)
+    return res
 
 
 def find_hook(hook_number):
     try:
-        hook_id = db.hooks.find_one({
+        hook = db.hooks.find_one({
             "number": hook_number,
-        })['_id']
+        })
+        hook_id = hook['_id']
     except TypeError:
         print('Hook does not exist')
         return None
-    return hook_id
+    return hook
 
 
 def find_building(building_name):
     try:
-        building_id = db.buildings.find_one({
+        building = db.buildings.find_one({
             "name": building_name,
-        })['_id']
+        })
+        building_id = building['_id']
     except TypeError:
         print('Building does not exist')
         return None
-    return building_id
+    return building
 
 
 def find_room(building_name, room_number):
-    building_id = find_building(building_name)
-    if not building_id:
+    building = find_building(building_name)
+    if not building:
         return None
     try:
-        room_id = db.rooms.find_one({
-            "building": DBRef('buildings', building_id),
+        room = db.rooms.find_one({
+            "building": DBRef('buildings', building['_id']),
             'number': room_number,
-        })['_id']
+        })
+        room_id = room['_id']
     except TypeError:
         print('Room does not exist')
         return None
-    return room_id
+    return room
 
 
 def find_door(building_name, room_number, door_name):
-    room_id = find_room(building_name, room_number)
-    if not room_id:
+    room = find_room(building_name, room_number)
+    if not room:
         return None
     try:
-        door_id = db.doors.find_one({
-            "room": DBRef('rooms', room_id),
+        door = db.doors.find_one({
+            "room": DBRef('rooms', room['_id']),
             'name': door_name,
-        })['_id']
+        })
+        door_id = door['_id']
     except TypeError:
         print('Door does not exist')
         return None
-    return door_id
+    return door
 
 
 def insert_building(name):
@@ -145,12 +192,12 @@ def insert_building(name):
 
 
 def insert_room(building_name, number):
-    building_id = find_building(building_name)
-    if not building_id:
+    building = find_building(building_name)
+    if not building:
         return None
     try:
         db.rooms.insert_one({
-            'building': DBRef('buildings', building_id),
+            'building': DBRef('buildings', building['_id']),
             'number': number,
         })
     except pymongo.errors.DuplicateKeyError:
@@ -158,12 +205,12 @@ def insert_room(building_name, number):
 
 
 def insert_door(building_name, room_number, name):
-    room_id = find_room(building_name, room_number)
-    if not room_id:
+    room = find_room(building_name, room_number)
+    if not room:
         return
     try:
         db.doors.insert_one({
-            'room': DBRef('rooms', room_id),
+            'room': DBRef('rooms', room['_id']),
             'name': name,
         })
     except pymongo.errors.DuplicateKeyError:
@@ -180,26 +227,28 @@ def insert_hook(number):
 
 
 def insert_hook_door(hook_number, building_name, room_number, door_name):
-    hook_id = find_hook(hook_number)
-    if not hook_id:
+    hook = find_hook(hook_number)
+    if not hook:
         return None
-    door_id = find_door(building_name, room_number, door_name)
-    if not door_id:
+    door = find_door(building_name, room_number, door_name)
+    if not door:
         return None
     try:
         db.hook_door.insert_one({
-            'hook': DBRef('hooks', hook_id),
-            'door': DBRef('doors', door_id)
+            'hook': DBRef('hooks', hook['_id']),
+            'door': DBRef('doors', door['_id'])
         })
     except pymongo.errors.DuplicateKeyError:
         print('The hook already open the door')
 
 
 def insert_key(hook_number, key_number):
-    hook_id = find_hook(hook_number)
+    hook = find_hook(hook_number)
+    if not hook:
+        return None
     try:
         db.keys.insert_one({
-            'hook': DBRef('hooks', hook_id),
+            'hook': DBRef('hooks', hook['_id']),
             'number': key_number
         })
     except pymongo.errors.DuplicateKeyError:
@@ -208,13 +257,14 @@ def insert_key(hook_number, key_number):
 
 def find_key(key_number):
     try:
-        key_id = db.keys.find_one({
+        key = db.keys.find_one({
             'number': key_number
         })
+        key_id = key['_id']
     except TypeError:
         print('Key does not exist')
         return None
-    return key_id
+    return key
 
 
 def insert_employee(employee_id, name):
@@ -229,30 +279,99 @@ def insert_employee(employee_id, name):
 
 def find_employee(employee_id):
     try:
-        eid = db.employees.find_one({
+        employee = db.employees.find_one({
             'employee_id': employee_id
         })
+        eid = employee['_id']
     except TypeError:
         print('Employee does not exist')
         return None
-    return eid
+    return employee
 
 
-def insert_request(employee_id, building_name, room_number, request_time):
-    eid = find_employee(employee_id)
-    if not eid:
+def insert_request(employee_id, building_name, room_number):
+    request_time = datetime.now()
+
+    employee = find_employee(employee_id)
+    if not employee:
         return None
-    room_id = find_room(building_name, room_number)
-    if not room_id:
+    room = find_room(building_name, room_number)
+    if not room:
         return None
-    try:
-        db.requests.insert_one({
-            'employee': DBRef('employees,', eid),
-            'room': DBRef('rooms', room_id),
-            'request_time': request_time,
-        })
-    except pymongo.errors.DuplicateKeyError:
-        print('Request already exist')
+    if room in room_employee_can_enter(employee):
+        print(employee['name'], 'already has access to the room')
+        return
+
+    doors = []
+    for door in db.doors.find({'room': DBRef('rooms', room['_id'])}):
+        doors.append(DBRef('doors', door['_id']))
+
+    for key in db.keys.find():
+        if db.hook_door.find_one({'hook': key['hook'], 'door': {'$in': doors}}):
+            loans = list(db.loan.find({'key': DBRef('keys', key['_id'])}))
+            if not loans:
+                request = db.requests.insert_one({
+                    'employee': DBRef('employees', employee['_id']),
+                    'room': DBRef('rooms', room['_id']),
+                    'request_time': request_time,
+                })
+                request_id = request.inserted_id
+                loan = db.loan.insert_one({
+                    'key': DBRef('keys', key['_id']),
+                    'request': DBRef('requests', request_id)
+                })
+                return [request_id, loan.inserted_id]
+            for lo in loans:
+                if db.returns.find_one({
+                    'loan': DBRef('loan', lo['_id']),
+                    '$and': [
+                        {'return_time': {'$gt': db.dereference(lo['request'])['request_time']}},
+                        {'loss': False}
+                    ]
+                }) is None:
+                    request = db.requests.insert_one({
+                        'employee': DBRef('employees', employee['_id']),
+                        'room': DBRef('rooms', room['_id']),
+                        'request_time': request_time,
+                    })
+                    request_id = request.inserted_id
+                    loan = db.loan.insert_one({
+                        'key': DBRef('keys', key['_id']),
+                        'request': DBRef('requests', request_id)
+                    })
+                    return [request_id, loan.inserted_id]
+
+    print('There is no key available')
+    return None
+
+
+def key_employee_hold(employee):
+    res = []
+    for req in db.requests.find({'employee': DBRef('employees', employee['_id'])}):
+        lo = db.loan.find_one({'request': DBRef('requests', req['_id'])})
+        if db.returns.find_one({
+            'loan': DBRef('loan', lo['_id']),
+        }) is None:
+            res.append(db.dereference(lo['key']))
+    return res
+
+
+def insert_return(employee_id, key_number, loss):
+    employee = find_employee(employee_id)
+    if not employee:
+        return None
+    key = find_key(key_number)
+    if not key:
+        return None
+    for lo in db.loan.find({'key': DBRef('keys', key['_id'])}):
+        if db.dereference(db.dereference(lo['request'])['employee']) == employee \
+                and db.returns.find_one({'loan': DBRef('loan', lo['_id'])}, {"_id": 1}) is None:
+            return db.returns.insert_one({
+                'loan': DBRef('loan', lo['_id']),
+                'loss': loss,
+                'return_time': datetime.now()
+            })
+    print('Invalid key number')
 
 # class Utilities:
 #     """I have several variations on a theme in this project, and each one will need to start up
