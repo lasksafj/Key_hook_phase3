@@ -231,4 +231,5 @@ if __name__ == '__main__':
             if not employees:
                 print('No one get access to the room')
             else:
-                print('Employees can enter the room: ', ', '.join([e['name'] for e in employees]))
+                emp = set([e['name'] for e in employees])
+                print('Employees can enter the room: ', ', '.join(emp))
