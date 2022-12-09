@@ -1,4 +1,6 @@
 import getpass
+import json
+
 import pymongo
 from bson import DBRef
 from pymongo import MongoClient
@@ -372,6 +374,63 @@ def insert_return(employee_id, key_number, loss):
                 'return_time': datetime.now()
             })
     print('Invalid key number')
+
+
+def prompt_room():
+    rooms = list(db.rooms.find())
+    if not rooms:
+        print('There is no room in database')
+        return None
+    print('Rooms in database: ',
+          ', '.join([db.dereference(r['building'])['name'] + ' ' + str(r['number']) for r in rooms]))
+    try:
+        building_name, room_number = input('Enter building and room: ').split()
+    except ValueError:
+        print('Invalid input')
+        return None
+    try:
+        room_number = int(room_number)
+    except ValueError:
+        print('Invalid room number')
+        return None
+    return find_room(building_name, room_number)
+
+
+def prompt_employee():
+    employees = list(db.employees.find())
+    if not employees:
+        print('There is no employee in database')
+        return None
+    print('Employees in database: ',
+          ', '.join([str(e['name']) + '(' + e['employee_id'] + ')' for e in employees]))
+    employee_id = input('Which employee (enter employee id): ')
+    return find_employee(employee_id)
+
+
+def prompt_hook():
+    hooks = list(db.hooks.find())
+    if not hooks:
+        print('There is no hook available')
+        return None
+    print('Hooks in database: ', ', '.join([str(h['number']) for h in hooks]))
+    try:
+        hook_number = int(input('Which hook you will use to make the key (enter number): '))
+    except ValueError:
+        print('Invalid hook number')
+        return None
+    return find_hook(hook_number)
+
+
+def prompt_door(room):
+    building_name, room_number = db.dereference(room['building'])['name'], room['number']
+    doors = list(db.doors.find({'room': DBRef('rooms', room['_id'])}))
+    if not doors:
+        print('There no door for the room in database')
+        return None
+    print('Doors of', building_name, str(room_number), 'in database: ', ', '.join([d['name'] for d in doors]))
+    door_name = input('Which door: ')
+    return find_door(building_name, room_number, door_name)
+
 
 # class Utilities:
 #     """I have several variations on a theme in this project, and each one will need to start up
