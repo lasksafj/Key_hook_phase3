@@ -65,14 +65,14 @@ if __name__ == '__main__':
             if not room:
                 continue
             building_name, room_number = db.dereference(room['building'])['name'], room['number']
-            door = Util.prompt_door(room)
-            if not door:
-                continue
 
             key = Util.find_key(key_number)
             if not key:
                 aws = input('Key is not in the database. Do you want to create new one? (y/n) ')
                 if aws == 'n':
+                    continue
+                door = Util.prompt_door(room)
+                if not door:
                     continue
                 hook = Util.prompt_hook()
                 if not hook:
@@ -122,7 +122,7 @@ if __name__ == '__main__':
             if not keys:
                 print('There no key in database')
                 continue
-            print('Keys in database: ', ', '.join([k['name'] for k in keys]))
+            print('Keys in database: ', ', '.join([str(k['number']) for k in keys]))
             try:
                 key_number = int(input('Enter key number: '))
             except ValueError:
@@ -152,7 +152,7 @@ if __name__ == '__main__':
             employee = Util.prompt_employee()
             if not employee:
                 continue
-            keys = Util.key_employee_hold()
+            keys = Util.key_employee_hold(employee)
             if not keys:
                 for req in db.requests.find({'employee': DBRef('employee', employee['_id'])}):
                     lo = db.loan.find_one({'request': DBRef('requests', req['_id'])})
